@@ -1,7 +1,53 @@
 # TRACE — PDF to DXF
 
-PDF図面のベクトル線・曲線・文字を、編集可能なDXFに変換するMac向けローカルアプリです。
-APIキーや外部サービスは不要です。変換はローカルのPythonで行い、ブラウザを操作画面として使います。
+PDF図面のベクトル線・曲線・文字を、編集可能なDXFに変換します。
+
+**公開版: https://qua2psy10-web.github.io/pdf-to-dxf/**
+
+公開版はインストール不要で、別のPCや外部ネットワークから利用できます。
+PDFの読込・変換・保存は利用者のブラウザ内で行います。選択したPDFをサーバーに送信しません。
+ページを配信するGitHubへのアクセスは発生しますが、PDF本文やファイル名の送信、解析用の外部API、広告・アクセス解析はありません。
+PDFはタブ内のメモリに保持し、ブラウザの永続ストレージには保存しません。
+
+最新版のChrome・Edge・Firefox・Safariを使用してください。大きなPDFの処理能力は端末のメモリ・CPUに依存します。
+公開版もスキャン画像の自動トレースには対応していません。
+
+## 公開版とローカル版
+
+| 項目 | 公開版（GitHub Pages） | ローカル版（Python） |
+| --- | --- | --- |
+| PDF処理 | PDF.js + ブラウザ内Web Worker | PyMuPDF + ezdxf |
+| 利用方法 | 公開URLを開く | 起動.command |
+| Pythonのインストール | 不要 | 必要 |
+| 直線・曲線 | LINE / SPLINE | LINE / LWPOLYLINE / SPLINE |
+| 文字 | 日本語TEXT、黒色・代替フォント | 日本語TEXT、文字色保持・代替フォント |
+| 線幅 | CADの既定値 | PDF線幅から近似 |
+| 不可視文字があるページ | ページの文字抽出を省略 | 可視文字のみ抽出 |
+| 保存 | 単一DXF / 全ページZIP | 単一DXF / 全ページZIP |
+
+公開版は1ファイル50MB・200ページ・1ページ30万要素、ZIPは展開後合計100MBまでです。
+画像、元のCADレイヤー・寸法オブジェクト、注釈、ハッチは復元しません。クリッピングや透明度は完全には再現しません。
+
+## Web版の開発と公開
+
+Node.js 24以上を推奨します。
+
+```sh
+npm ci
+npm test
+npm run build
+python3 -m http.server 8766 --bind 127.0.0.1 --directory dist
+```
+
+`http://127.0.0.1:8766` で確認できます。公開されるファイルは `dist/` 内だけです。
+PDF.js・日本語CMap・標準フォント・WASM・使用ライブラリのライセンスを同じサイトから配信し、CDNは使いません。
+
+`.github/workflows/pages.yml` が `main` へのプッシュ時にテスト・ビルド・GitHub Pagesへの公開を行います。
+リポジトリの Settings → Pages → Build and deployment は **GitHub Actions** に設定します。
+Pull Requestではテストとビルドのみ実行し、公開しません。
+この公開版は一般公開です。ブラウザ内の見かけだけのパスワード保護は実装していません。
+
+以下はPythonローカル版の説明です。APIキーは不要です。
 
 ## 起動
 
@@ -71,12 +117,16 @@ TRACE_PORT=8766 .venv/bin/python run.py
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 node --check static/app.js
+npm ci
+npm test
+npm run build
 ```
 
 21件の自動テストで、座標・単位、4方向回転、CropBox、曲線制御点、日本語、文字除外、色、破線、閉じたパス、塗りつぶしの暗黙の閉合、スキャンPDF、暗号化PDF、不正な入力、ローカルアクセス制限、期限切れ、ZIPを検証しています。
 出力DXFをezdxfで再読込し、構造の監査を行います。
 付属サンプル2ページ目の検証線は用紙上90mmです。縮尺100なら9,000mm、50なら4,500mmになります。
 実際の業務PDFと利用先CADでの互換性は、対象ファイルを使って別途照合してください。
+Web版は9件のJavaScriptテストを追加しています。Node依存関係がある場合、PythonテストでもWeb版DXFを実際に生成し、回転・CropBox・曲線・日本語・DXF構造を照合します（Python全22件）。
 
 ## 構成
 
@@ -87,5 +137,8 @@ node --check static/app.js
 - `examples/サンプル図面.pdf`: 実際に変換できる2ページのPDF
 - `tests/`: 変換とAPIの回帰テスト
 - `design/concept.png` / `design/spec.md`: 画面デザイン案と仕様
+- `web/`: ブラウザ内変換エンジン・ローカル処理アダプター・変換Worker
+- `scripts/build-web.mjs`: 既存画面を再利用した静的サイトのビルド
+- `.github/workflows/pages.yml`: 自動テスト・GitHub Pages公開
 
 使用ライブラリの仕様: [PyMuPDFの図形抽出](https://pymupdf.readthedocs.io/en/latest/recipes-drawing-and-graphics.html)、[ページ座標・回転](https://pymupdf.readthedocs.io/en/latest/page.html)、[ezdxf](https://ezdxf.readthedocs.io/en/stable/)。
