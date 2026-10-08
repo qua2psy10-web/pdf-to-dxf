@@ -11,8 +11,11 @@ function status(message, type = "") {
 
 function validScale() { return $("scale").value !== "" && $("scale").checkValidity(); }
 
+function tracing() { return !!$("trace-mode") && $("trace-mode").value !== "off"; }
+
 function updateButtons() {
-  $("export-button").disabled = !state.file || state.busy || !validScale() || ((state.info?.kind === "empty" || (state.info?.kind === "image" && state.info?.texts === 0)) && $("output-pages").value !== "all");
+  $("export-button").disabled = !state.file || state.busy || !validScale() || ((state.info?.kind === "empty" || (state.info?.kind === "image" && state.info?.texts === 0 && !tracing())) && $("output-pages").value !== "all");
+  for (const id of ["trace-mode", "trace-threshold"]) if ($(id)) $(id).disabled = state.busy;
   $("page-select").disabled = !state.file || state.busy;
   $("next-page").disabled = !state.file || state.busy || state.page >= state.file.pages;
   $("sample-button").disabled = state.busy;
@@ -23,7 +26,7 @@ function updateButtons() {
 
 function parameters() {
   return new URLSearchParams({ page: state.page, scale: $("scale").value,
-    text: $("include-text").checked ? "1" : "0", colors: $("keep-colors").checked ? "1" : "0", mode: state.mode });
+    text: $("include-text").checked ? "1" : "0", colors: $("keep-colors").checked ? "1" : "0", mode: state.mode, trace: $("trace-mode")?.value || "off", threshold: $("trace-threshold")?.value || "180" });
 }
 
 async function responseOrError(response) {
@@ -93,7 +96,10 @@ async function refreshPreview() {
     $("page-size").textContent = sizeLabel(info);
     $("entity-count").textContent = `${info.paths.toLocaleString()}図形 · ${info.texts.toLocaleString()}文字列`;
     showWarnings(info.images ? ["画像を含むPDFです。画像部分はDXFに変換されません。"] : []);
-    if (!info.paths && info.images) {
+    if (info.images && tracing()) {
+      showWarnings([info.paths ? "ベクトル線と画像を含むページです。画像も変換するには「ページ全体をトレース」を選択してください。" : "スキャン画像を検出しました。DXFタブで輪郭を確認し、読み取りの濃さを調整してください。"]);
+    }
+    if (!info.paths && info.images && !tracing()) {
       showWarnings(["線を抽出できない画像PDFです。スキャン図面の自動トレースには対応していません。" + (info.texts ? "文字のみ変換できる場合があります。" : "")]);
       status("スキャン画像から線を抽出する機能には対応していません。", "error");
     }
@@ -178,3 +184,8 @@ dropzone.addEventListener("drop", event => { if (event.dataTransfer.files[0]) lo
 // Prevent a dropped PDF outside the target from replacing the app page.
 window.addEventListener("dragover", event => event.preventDefault());
 window.addEventListener("drop", event => event.preventDefault());
+
+for (const id of ["trace-mode", "trace-threshold"]) $(id)?.addEventListener("change", () => {
+  updateButtons();
+  if(state.file) refreshPreview();
+});

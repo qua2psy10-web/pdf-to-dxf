@@ -7,7 +7,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.mjs',import.m
 let current=null, sequence=0, conversionWorker;
 const jobs=new Map();
 
-function convert(art,options) {
+function convert(art,options,raster) {
   if (!conversionWorker) {
     conversionWorker=new Worker(new URL('./convert-worker.js',import.meta.url),{type:'module'});
     conversionWorker.onmessage=({data})=> {
@@ -22,7 +22,7 @@ function convert(art,options) {
     };
   }
   return new Promise((resolve,reject)=> {
-    const id=++sequence; jobs.set(id,{resolve,reject}); conversionWorker.postMessage({id,art,options});
+    const id=++sequence; jobs.set(id,{resolve,reject}); conversionWorker.postMessage({id,art,options,raster},raster?[raster.data.buffer]:[]);
   });
 }
 
@@ -83,6 +83,23 @@ async function pdfPreview(page,signal) {
   } finally { signal?.removeEventListener('abort',cancel); canvas.width=canvas.height=0; }
 }
 
+async function convertPage(item,options,signal) {
+  if(options.trace==='off'||(options.trace==='auto'&&(item.art.paths>0||!item.art.images))) return convert(item.art,options);
+  abort(signal);
+  const base=item.page.getViewport({scale:1});
+  const viewport=item.page.getViewport({scale:2200/Math.max(base.width,base.height)});
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
+  const context=canvas.getContext('2d',{willReadFrequently:true});
+  const task=item.page.render({canvasContext:context,viewport,background:'white',annotationMode:pdfjs.AnnotationMode.DISABLE});
+  const cancel=()=>task.cancel();signal?.addEventListener('abort',cancel,{once:true});
+  try {
+    await task.promise;abort(signal);
+    const data=context.getImageData(0,0,canvas.width,canvas.height).data;
+    return await convert(null,options,{data,width:canvas.width,height:canvas.height,pageWidth:base.width,pageHeight:base.height});
+  } finally {signal?.removeEventListener('abort',cancel);canvas.width=canvas.height=0;}
+}
+
 async function dispatch(path,request={}) {
   const {signal}=request; abort(signal);
   if(path==='/api/upload') {
@@ -101,7 +118,7 @@ async function dispatch(path,request={}) {
   const file=current, endpoint=match[2], query=url.searchParams;
   const number=Number(query.get('page')||1);
   if(!Number.isInteger(number)||number<1||number>file.doc.numPages) throw new Error('指定したページは存在しません。');
-  const options={scale:Number(query.get('scale')||100),text:query.get('text')!=='0',colors:query.get('colors')!=='0'};
+  const options={scale:Number(query.get('scale')||100),text:query.get('text')!=='0',colors:query.get('colors')!=='0',trace:query.get('trace')||'auto',threshold:Number(query.get('threshold')||180)};
   if(endpoint==='export'&&query.get('all')==='1') {
     const files={},reports=[];
     let successes=0,totalSize=0;
@@ -112,7 +129,7 @@ async function dispatch(path,request={}) {
       let item;
       try {
         item=await artwork(file,p);
-        const result=await convert(item.art,options);
+        const result=await convertPage(item,options,signal);
         const bytes=strToU8(result.dxf); totalSize+=bytes.length;
         if(totalSize>100*1024*1024) throw new RangeError('出力サイズが100MBを超えました。ページごとに保存してください。');
         files[`${stem}_p${p}.dxf`]=bytes;
@@ -131,7 +148,7 @@ async function dispatch(path,request={}) {
   const item=await artwork(file,number); abort(signal);
   if(endpoint==='page') return json(pageInfo(item.art,number));
   if(endpoint==='preview'&&query.get('mode')!=='dxf') return new Response(await pdfPreview(item.page,signal));
-  const result=await convert(item.art,options); abort(signal);
+  const result=await convertPage(item,options,signal); abort(signal);
   if(endpoint==='report') return json({...result.report,page:number});
   if(endpoint==='preview') return new Response(result.svg,{headers:{'Content-Type':'image/svg+xml'}});
   return new Response(result.dxf,{headers:{'Content-Type':'application/dxf'}});
